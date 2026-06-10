@@ -1,0 +1,270 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use Term::ReadKey;
+use Text::Table;
+use Text::Wrap;
+use Term::ANSIColor qw(colored);
+use Getopt::Long qw(:config no_ignore_case);
+use utf8;
+use FindBin;
+use String::ShellQuote;
+my $ourname=$FindBin::RealScript;
+my $ourdir=$FindBin::RealDir;
+
+binmode(*STDOUT, ":encoding(utf-8)");
+
+# CLI Options
+my $verbose = 0;
+my $long = 0;
+my $no_color = 0;
+my $retrieve = '';
+my $verify = 0;
+my $help = 0;
+my $legend = 1;
+
+GetOptions(
+    "v+"             => \$verbose,
+    "l|long"         => \$long,
+    "C"              => \$no_color,
+    "r|retrieve=s"   => \$retrieve,
+    "verify"         => \$verify,
+    "h|help"         => \$help,
+    "L|no-legend!"   => sub { $legend = 0 }
+);
+
+if ($help) {
+    print <<"END_HELP";
+Usage: $0 [options]
+
+Options:
+  -v              Increase verbosity (use -vv for more)
+  -l, --long      Show extended columns in the table
+                  (currently there are no extras; all are displayed)
+  -C              Disable colored output
+  -r, --retrieve LICENSE_ID
+                  Download the license text and save as LICENSE
+  --verify        Check availability of license URLs
+  -h, --help      Show this help message
+  -L, --no-legend Disable legend
+END_HELP
+    exit;
+}
+
+$ENV{ANSI_COLORS_DISABLED} = 1 if $no_color;
+
+# Terminal width
+my ($term_w, $term_h) = GetTerminalSize();
+$term_w ||= 80;
+
+# Column spec (order matters)
+my @columns = (
+    { key => 'ID',        title => 'ID',           align => 'left',   extra => 0 },
+    { key => 'Cr',        title => 'Cr.',          align => 'center', extra => 0 },
+    { key => 'CL',        title => 'CLeft',        align => 'center', extra => 0 },
+    { key => 'Comrc',     title => 'Comrc.',       align => 'center', extra => 0 },
+    { key => 'Mod',       title => 'Mod.',         align => 'center', extra => 0 },
+    { key => 'Redist',    title => 'Redist',       align => 'center', extra => 0 },
+    { key => 'Subl',      title => 'Subl.',        align => 'center', extra => 0 },
+    { key => 'StatLn',    title => 'Stat.Ln',      align => 'center', extra => 0 },
+    { key => 'DynLn',     title => 'Dyn.Ln',       align => 'center', extra => 0 },
+    { key => 'Prop',      title => 'Prop.',        align => 'center', extra => 0 },
+    { key => 'GPLCmp',    title => 'GPLCmp',       align => 'center', extra => 0 },
+    { key => 'DiscSrc',   title => 'DiscSrc',      align => 'center', extra => 0 },
+    { key => 'DiscNet',   title => 'DiscNet',      align => 'center', extra => 0 },
+    { key => 'DiscChg',   title => 'DiscChg',      align => 'center', extra => 0 },
+    { key => 'AttrNOTI',  title => 'AttrNOTI',     align => 'center', extra => 0 },
+    { key => 'NoWarr',    title => 'NoWarr',       align => 'center', extra => 0 },
+    { key => 'TMok',      title => 'TMok',         align => 'center', extra => 0 },
+    { key => 'PatRetal',  title => 'PatRetal',     align => 'center', extra => 0 },
+);
+
+# Main license matrix
+my @licenses = (
+    { ID => "MIT",        Cr=>1, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>0, DiscNet=>0, DiscChg=>0, AttrNOTI=>0, NoWarr=>1, TMok=>0, PatRetal=>0 },
+    { ID => "Apache-2.0", Cr=>1, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>1, DiscNet=>0, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>1, PatRetal=>1 },
+    { ID => "BSD-2-Clause",Cr=>1, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>0, DiscNet=>0, DiscChg=>0, AttrNOTI=>0, NoWarr=>1, TMok=>0, PatRetal=>0 },
+    { ID => "BSD-3-Clause",Cr=>1, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>0, DiscNet=>0, DiscChg=>0, AttrNOTI=>0, NoWarr=>1, TMok=>0, PatRetal=>0 },
+    { ID => "GPL-2.0",    Cr=>1, CL=>1, Comrc=>1, Mod=>1, Redist=>1, Subl=>0, StatLn=>0, DynLn=>0, Prop=>0, GPLCmp=>1, DiscSrc=>1, DiscNet=>0, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>0, PatRetal=>1 },
+    { ID => "GPL-3.0",    Cr=>1, CL=>1, Comrc=>1, Mod=>1, Redist=>1, Subl=>0, StatLn=>0, DynLn=>0, Prop=>0, GPLCmp=>1, DiscSrc=>1, DiscNet=>0, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>0, PatRetal=>1 },
+    { ID => "LGPL-3.0",   Cr=>1, CL=>1, Comrc=>1, Mod=>1, Redist=>1, Subl=>0, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>1, DiscNet=>0, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>0, PatRetal=>1 },
+    { ID => "AGPL-3.0",   Cr=>1, CL=>1, Comrc=>1, Mod=>1, Redist=>1, Subl=>0, StatLn=>0, DynLn=>0, Prop=>0, GPLCmp=>1, DiscSrc=>1, DiscNet=>1, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>0, PatRetal=>1 },
+    { ID => "MPL-2.0",    Cr=>1, CL=>1, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>1, DiscNet=>0, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>0, PatRetal=>1 },
+    { ID => "EPL-2.0",    Cr=>1, CL=>1, Comrc=>1, Mod=>1, Redist=>1, Subl=>0, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>0, DiscSrc=>1, DiscNet=>0, DiscChg=>1, AttrNOTI=>1, NoWarr=>1, TMok=>0, PatRetal=>1 },
+    { ID => "Unlicense",  Cr=>0, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>0, DiscNet=>0, DiscChg=>0, AttrNOTI=>0, NoWarr=>1, TMok=>0, PatRetal=>0 },
+    { ID => "CC0-1.0",    Cr=>0, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>0, DiscNet=>0, DiscChg=>0, AttrNOTI=>0, NoWarr=>1, TMok=>0, PatRetal=>0 },
+    { ID => "WTFPL",      Cr=>0, CL=>0, Comrc=>1, Mod=>1, Redist=>1, Subl=>1, StatLn=>1, DynLn=>1, Prop=>1, GPLCmp=>1, DiscSrc=>0, DiscNet=>0, DiscChg=>0, AttrNOTI=>0, NoWarr=>1, TMok=>0, PatRetal=>0 },
+);
+
+# License URLs (can have multiple URLs as backups)
+my %license_urls = (
+    'MIT'         => ['https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/mit.txt',
+                      'https://opensource.org/licenses/MIT'],
+    'Apache-2.0'  => ['https://www.apache.org/licenses/LICENSE-2.0.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/apache-2.0.txt'],
+    'BSD-2-Clause'=> ['https://opensource.org/licenses/BSD-2-Clause',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/bsd-2-clause.txt'],
+    'BSD-3-Clause'=> ['https://opensource.org/licenses/BSD-3-Clause',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/bsd-3-clause.txt'],
+    'GPL-2.0'     => ['https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/gpl-2.0.txt'],
+    'GPL-3.0'     => ['https://www.gnu.org/licenses/gpl-3.0.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/gpl-3.0.txt'],
+    'LGPL-3.0'    => ['https://www.gnu.org/licenses/lgpl-3.0.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/lgpl-3.0.txt'],
+    'AGPL-3.0'    => ['https://www.gnu.org/licenses/agpl-3.0.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/agpl-3.0.txt'],
+    'MPL-2.0'     => ['https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/mpl-2.0.txt'],
+    'EPL-2.0'     => ['https://www.eclipse.org/org/documents/epl-2.0/EPL-2.0.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/epl-2.0.txt'],
+    'Unlicense'   => ['https://unlicense.org/UNLICENSE',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/unlicense.txt'],
+    'CC0-1.0'     => ['https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/cc0-1.0.txt'],
+    'WTFPL'       => ['http://www.wtfpl.net/txt/copying/',
+                      'https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/wtfpl.txt'],
+);
+my %license_lookup = map { lc($_) => $_ } keys %license_urls;
+
+# Retrieve
+if ($retrieve) {
+    my $license_id = $license_lookup{lc($retrieve)};
+    if (!$license_id) {
+        die "Unknown license ID: $retrieve\n";
+    }
+    
+    my $urls = $license_urls{$license_id};
+    
+    my $success = 0;
+    foreach my $url (@$urls) {
+        print "Trying to fetch license from $url...\n";
+        my @cmd = ("curl", '-sSf', $url, '-o', 'LICENSE');
+        print "Executing: ", shell_quote(@cmd), "\n" if $verbose;
+        
+        if (system(@cmd) == 0) {
+            print "License saved as LICENSE\n";
+            system("ls -lgG LICENSE");
+            $success = 1;
+            last;
+        } else {
+            print "Failed to download from $url\n";
+        }
+    }
+    
+    die "Failed to download license from any URL\n" unless $success;
+    exit;
+}
+
+# Verify
+if ($verify) {
+    my $all_good = 1;
+    foreach my $licname (sort keys %license_urls) {
+        my $urls = $license_urls{$licname};
+        print "Checking license: $licname\n";
+        
+        my $license_good = 0;
+        foreach my $url (@$urls) {
+            print "  Checking: $url\n" if $verbose || @$urls > 1;
+            
+            # Try a more thorough check - actually download a few bytes
+            my $exit = system("curl -sSf --max-time 10 -r 0-100 \"$url\" > /dev/null 2>&1");
+            if ($exit == 0) {
+                print "    " . colored("✓", 'green') . " OK\n" if $verbose || @$urls > 1;
+                $license_good = 1;
+                last; # Found a working URL for this license
+            } else {
+                print "    " . colored("✗", 'red') . " Error accessing $url\n";
+                if ($verbose) {
+                    print "      Details: ";
+                    system("curl -sSf --max-time 5 -r 0-10 \"$url\" 2>&1 | head -1");
+                }
+            }
+        }
+        
+        if (!$license_good) {
+            print "  " . colored("ERROR: No working URLs found for $licname", 'red') . "\n";
+            $all_good = 0;
+        } elsif (@$urls == 1) {
+            print "  " . colored("✓", 'green') . " OK\n";
+        } else {
+            print "  " . colored("✓", 'green') . " At least one URL working\n";
+        }
+    }
+    
+    if ($all_good) {
+        print "\n" . colored("All license URLs verified successfully!", 'green') . "\n";
+    } else {
+        print "\n" . colored("Some license URLs have issues!", 'red') . "\n";
+    }
+    exit;
+}
+
+# mark helper
+sub mark {
+    my ($flag) = @_;
+    return $flag ? colored("\x{2714}", 'green') : colored("\x{2718}", 'red');
+}
+
+# Setup table
+my $visible_columns = [ grep { !$_->{extra} || $long } @columns ];
+my $tb = Text::Table->new(map {
+    { title => $_->{title}, align => $_->{align}, sample => ' ' }
+} @$visible_columns);
+
+for my $L (@licenses) {
+    my @row = map {
+        my $k = $_->{key};
+        defined $L->{$k} ? ($k eq 'ID' ? $L->{$k} : mark($L->{$k})) : ''
+    } @$visible_columns;
+    $tb->add(@row);
+}
+
+# Print table
+print $tb->title, "\n";
+print $tb->body,  "\n";
+print "Use: '" . colored("$ourname -r NAME", 'cyan') . "' to download one and save as LICENSE.\n";
+print " Ex: '" . colored("$ourname -r GPL-3.0", 'cyan') . "'\n";
+print "     -h for help  -L disable legend\n";
+
+sub cols_to_2col {
+    map {
+        my $i = $_ * 2;
+        [ @{ $_[$i]   },  # key1, desc1
+          '|',
+          @{ $_[$i+1] }  # key2, desc2
+        ]
+    } 0 .. (@_/2 - 1);
+}
+
+# Legend if verbose
+if ($verbose || $legend) {
+    my $lg = Text::Table->new();
+    my @coldescs = (
+        ['Cr.',        'Attribution required'],
+        ['CLeft',      'Copyleft (same license required)'],
+        ['Comrc.',     'Commercial use allowed'],
+        ['Mod.',       'Modifications allowed'],
+        ['Redist',     'Redistribution allowed'],
+        ['Subl.',      'Sublicensing allowed'],
+        ['Stat.Ln',    'Static linking permitted'],
+        ['Dyn.Ln',     'Dynamic linking permitted'],
+        ['Prop.',      'Proprietary use allowed'],
+        ['GPLCmp',     'GPL compatible'],
+        ['DiscSrc',    'Must disclose source'],
+        ['DiscNet',    'Must disclose source over network use'],
+        ['DiscChg',    'Must disclose changes'],
+        ['AttrNOTI',   'Must include NOTICE file'],
+        ['NoWarr',     'No warranty'],
+        ['TMok',       'Trademark use allowed'],
+        ['PatRetal',   'Patent retaliation clause'],
+    );
+    # Generate in pairs like [Cr., Attribu..., CLeft, Copyleft...]
+    my @coldescs_wide = cols_to_2col(@coldescs);
+    $lg->load(@coldescs_wide);
+    print "\nLegend:";
+    print $lg->title, "\n";
+    print $lg->body,  "\n";
+    print "\n" if $verbose > 1;
+    print "\nDetailed explanation coming soon...\n" if $verbose > 1;
+}
