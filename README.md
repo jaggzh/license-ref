@@ -13,6 +13,7 @@ Need a LICENSE for your OSS project?
 <div align="center">
   <em>Main Listing...</em><br>
 </div>
+
 ```bash
 $ license-ref
 View license options and comparison
@@ -29,4 +30,4 @@ $ license-ref -r MIT
 Download the MIT license as LICENSE in the current folder
 ```
 
-![Downloading a License](ss/ss-download.png "Downloading a License">
+![Downloading a License](ss/ss-download.png "Downloading a License")
